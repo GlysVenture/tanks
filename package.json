@@ -1,0 +1,25 @@
+{
+  "name": "tanks",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n wasm,vite -c yellow,cyan \"bun scripts/watch-wasm.ts\" \"vite\"",
+    "build": "wasm-pack build crates/tanks --target web --release --out-dir ../../src/wasm && vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/three": "^0.185.4",
+    "concurrently": "^10.0.5",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
+    "typescript": "6",
+    "vite": "^8.2.2"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  }
+}
