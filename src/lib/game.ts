@@ -52,6 +52,7 @@ export async function startGame(canvas: HTMLCanvasElement): Promise<GameControll
     if (keys.has('KeyA') || keys.has('ArrowLeft')) moveX -= 1
     if (keys.has('KeyD') || keys.has('ArrowRight')) moveX += 1
     game.set_input(moveX, moveY, aim.x, aim.y)
+    renderer.setAim(aim.x, aim.y)
 
     renderer.sync(game.tick(dt))
     renderer.onEvents(game.take_events())

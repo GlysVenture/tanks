@@ -17,11 +17,11 @@ pub const EVENT_LEN: usize = 4;
 const ARENA_HALF: f32 = 10.0;
 const TANK_SPEED: f32 = 4.0;
 const TANK_TURN_RATE: f32 = 8.0;
-const SHELL_SPEED: f32 = 12.0;
-const SHELL_TTL: f32 = 2.5;
+const SHELL_SPEED: f32 = 6.0;
+const SHELL_TTL: f32 = 6.0;
 const SHELL_RADIUS: f32 = 0.15;
 const SHELL_SUBSTEP: f32 = 0.3;
-const FIRE_COOLDOWN: f32 = 0.4;
+const FIRE_COOLDOWN: f32 = 0.15;
 const TANK_RADIUS: f32 = 0.7;
 const BLOCK_SIZE: f32 = 1.25;
 const BLOCK_ID_BASE: u32 = 100_000;
@@ -34,7 +34,7 @@ pub struct Sim {
     next_id: u32,
     move_dir: Vec2,
     aim: Vec2,
-    want_fire: bool,
+    want_fire: u32,
     fire_cooldown: f32,
 }
 
@@ -105,7 +105,7 @@ impl Sim {
             next_id: 10_000,
             move_dir: Vec2::ZERO,
             aim: Vec2::new(4.0, 0.0),
-            want_fire: false,
+            want_fire: 0,
             fire_cooldown: 0.0,
         }
     }
@@ -121,7 +121,7 @@ impl Sim {
     }
 
     pub fn request_fire(&mut self) {
-        self.want_fire = true;
+        self.want_fire = (self.want_fire + 1).min(8);
     }
 
     pub fn tick(&mut self, dt: f32) {
@@ -139,10 +139,11 @@ impl Sim {
         self.player.turret_rot = to_aim.y.atan2(to_aim.x);
 
         self.fire_cooldown -= dt;
-        if self.want_fire && self.fire_cooldown <= 0.0 {
+        if self.want_fire > 0 && self.fire_cooldown <= 0.0 {
+            self.want_fire -= 1;
             self.fire_cooldown = FIRE_COOLDOWN;
             let dir = Vec2::new(self.player.turret_rot.cos(), self.player.turret_rot.sin());
-            let muzzle = self.player.pos + dir * 1.2;
+            let muzzle = self.player.pos + dir * 0.85;
             self.shells.push(Shell {
                 id: self.next_id,
                 pos: muzzle,
@@ -154,7 +155,6 @@ impl Sim {
             self.next_id += 1;
             self.push_event(EV_SHELL_FIRED, muzzle, self.player.turret_rot);
         }
-        self.want_fire = false;
 
         let Sim { shells, blocks, .. } = self;
         for s in shells.iter_mut() {
@@ -213,9 +213,9 @@ impl Sim {
                 kind: KIND_SHELL,
                 id: s.id as f32,
                 pos: s.pos,
-                hull_rot: 0.0,
+                hull_rot: s.vel.y.atan2(s.vel.x),
                 turret_rot: 0.0,
-                scale: 0.3,
+                scale: 1.0,
                 flags: FLAG_ALIVE,
             }
             .push(&mut out, &mut n);
@@ -361,12 +361,34 @@ mod tests {
     }
 
     #[test]
-    fn shell_bounces_once_then_explodes_on_second_hit() {
+    fn queued_fire_fires_each_press() {
+        let mut sim = Sim::new();
+        sim.set_input(0.0, 0.0, 5.0, 0.0);
+        sim.request_fire();
+        sim.request_fire();
+        sim.request_fire();
+        sim.tick(0.1);
+        assert_eq!(sim.shells.len(), 1);
+        sim.tick(0.1);
+        assert_eq!(sim.shells.len(), 1);
+        sim.tick(0.2);
+        assert_eq!(sim.shells.len(), 2);
+        sim.tick(0.2);
+        assert_eq!(sim.shells.len(), 3);
+    }
+
+    #[test]
+    fn shell_bounces_once_then_expires() {
         let mut sim = Sim::new();
         sim.set_input(0.0, 0.0, 0.0, 10.0);
         sim.request_fire();
         sim.tick(0.1);
         assert_eq!(sim.shells.len(), 1);
+        for _ in 0..150 {
+            sim.tick(0.016);
+        }
+        assert_eq!(sim.shells.len(), 1);
+        assert_eq!(sim.shells[0].bounces, 1);
         for _ in 0..200 {
             sim.tick(0.016);
         }
