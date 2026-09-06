@@ -10,6 +10,8 @@ const KIND_BLOCK = 2
 const FLAG_PLAYER = 2
 const EVENT_EXPLOSION = 1
 
+const VIEW_SIZE = 18
+
 export interface Renderer {
   sync(data: Float32Array): void
   onEvents(data: Float32Array): void
@@ -22,14 +24,14 @@ export interface Renderer {
 export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
   const scene = new THREE.Scene()
   scene.background = new THREE.Color('#15181c')
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100)
-  camera.position.set(0, 15, 12)
+  const camera = new THREE.OrthographicCamera(-16, 16, 11, -11, 0.1, 100)
+  camera.position.set(0, 21, 21)
   camera.lookAt(0, 0, 0)
 
   const ambient = new THREE.AmbientLight('#ffffff', 0.6)
@@ -61,6 +63,37 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   const shellGeo = new THREE.SphereGeometry(0.5, 12, 8)
   const blockGeo = new THREE.BoxGeometry(1, 1, 1)
   const explosionGeo = new THREE.IcosahedronGeometry(0.5, 1)
+
+  function woodTexture(seed: number) {
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 128
+    const ctx = canvas.getContext('2d')!
+    let s = seed % 2147483647
+    const rand = () => {
+      s = (s * 16807) % 2147483647
+      return s / 2147483647
+    }
+    ctx.fillStyle = '#9c7a4f'
+    ctx.fillRect(0, 0, 128, 128)
+    for (let i = 0; i < 30; i++) {
+      const x = rand() * 128
+      ctx.fillStyle = `rgba(74, 50, 24, ${0.08 + rand() * 0.2})`
+      ctx.fillRect(x, 0, 0.5 + rand() * 2.5, 128)
+    }
+    for (let i = 0; i < 14; i++) {
+      const x = rand() * 128
+      ctx.fillStyle = `rgba(214, 178, 128, ${0.05 + rand() * 0.12})`
+      ctx.fillRect(x, 0, 0.5 + rand() * 1.5, 128)
+    }
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    return tex
+  }
+
+  const blockMaterials = [11, 22, 33].map(
+    (seed) => new THREE.MeshStandardMaterial({ map: woodTexture(seed), roughness: 0.85 }),
+  )
 
   function makeTank(isPlayer: boolean) {
     const root = new THREE.Group()
@@ -103,12 +136,9 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
     return root
   }
 
-  function makeBlock() {
+  function makeBlock(id: number) {
     const root = new THREE.Group()
-    const mesh = new THREE.Mesh(
-      blockGeo,
-      new THREE.MeshStandardMaterial({ color: '#707682', roughness: 0.85 }),
-    )
+    const mesh = new THREE.Mesh(blockGeo, blockMaterials[id % blockMaterials.length])
     mesh.position.y = 0.5
     mesh.castShadow = true
     mesh.receiveShadow = true
@@ -128,7 +158,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
     if (!root) {
       if (kind === KIND_TANK) root = makeTank((flags & FLAG_PLAYER) !== 0)
       else if (kind === KIND_SHELL) root = makeShell()
-      else root = makeBlock()
+      else root = makeBlock(id)
       scene.add(root)
       entities.set(id, root)
     }
@@ -200,7 +230,12 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
 
     resize(width: number, height: number) {
       renderer.setSize(width, height, false)
-      camera.aspect = width / height
+      const aspect = width / height
+      const viewHeight = Math.max(VIEW_SIZE, VIEW_SIZE / aspect)
+      camera.top = viewHeight / 2
+      camera.bottom = -viewHeight / 2
+      camera.left = (-viewHeight * aspect) / 2
+      camera.right = (viewHeight * aspect) / 2
       camera.updateProjectionMatrix()
     },
 

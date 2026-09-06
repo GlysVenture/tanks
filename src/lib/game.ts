@@ -35,7 +35,6 @@ export async function startGame(canvas: HTMLCanvasElement): Promise<GameControll
   }
   const observer = new ResizeObserver(resize)
   observer.observe(canvas)
-  resize()
 
   let running = true
   let raf = 0

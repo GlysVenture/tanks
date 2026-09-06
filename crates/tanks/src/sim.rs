@@ -19,9 +19,11 @@ const TANK_SPEED: f32 = 4.0;
 const TANK_TURN_RATE: f32 = 8.0;
 const SHELL_SPEED: f32 = 12.0;
 const SHELL_TTL: f32 = 2.5;
+const SHELL_RADIUS: f32 = 0.15;
+const SHELL_SUBSTEP: f32 = 0.3;
 const FIRE_COOLDOWN: f32 = 0.4;
 const TANK_RADIUS: f32 = 0.7;
-const BLOCK_SIZE: f32 = 1.0;
+const BLOCK_SIZE: f32 = 1.25;
 const BLOCK_ID_BASE: u32 = 100_000;
 
 pub struct Sim {
@@ -47,6 +49,8 @@ struct Shell {
     pos: Vec2,
     vel: Vec2,
     ttl: f32,
+    bounces: u32,
+    dead: bool,
 }
 
 struct Block {
@@ -144,25 +148,48 @@ impl Sim {
                 pos: muzzle,
                 vel: dir * SHELL_SPEED,
                 ttl: SHELL_TTL,
+                bounces: 0,
+                dead: false,
             });
             self.next_id += 1;
             self.push_event(EV_SHELL_FIRED, muzzle, self.player.turret_rot);
         }
         self.want_fire = false;
 
-        for s in &mut self.shells {
-            s.pos += s.vel * dt;
+        let Sim { shells, blocks, .. } = self;
+        for s in shells.iter_mut() {
             s.ttl -= dt;
+            if s.ttl <= 0.0 {
+                continue;
+            }
+            let steps = ((s.vel.length() * dt / SHELL_SUBSTEP).ceil() as usize).clamp(1, 16);
+            let step_dt = dt / steps as f32;
+            for _ in 0..steps {
+                s.pos += s.vel * step_dt;
+                if let Some((closest, normal)) = shell_hit(s.pos, SHELL_RADIUS, blocks) {
+                    s.pos = closest + normal * (SHELL_RADIUS + 0.001);
+                    if s.bounces >= 1 {
+                        s.dead = true;
+                        break;
+                    }
+                    if s.vel.dot(normal) < 0.0 {
+                        s.vel -= 2.0 * s.vel.dot(normal) * normal;
+                    }
+                    s.bounces += 1;
+                }
+            }
         }
-        let dead: Vec<Vec2> = self
-            .shells
+        let exploded: Vec<Vec2> = shells
             .iter()
-            .filter(|s| s.ttl <= 0.0 || s.pos.x.abs() > ARENA_HALF || s.pos.y.abs() > ARENA_HALF)
+            .filter(|s| {
+                s.dead || s.ttl <= 0.0 || s.pos.x.abs() > ARENA_HALF || s.pos.y.abs() > ARENA_HALF
+            })
             .map(|s| s.pos)
             .collect();
-        self.shells
-            .retain(|s| s.ttl > 0.0 && s.pos.x.abs() <= ARENA_HALF && s.pos.y.abs() <= ARENA_HALF);
-        for pos in dead {
+        shells.retain(|s| {
+            !s.dead && s.ttl > 0.0 && s.pos.x.abs() <= ARENA_HALF && s.pos.y.abs() <= ARENA_HALF
+        });
+        for pos in exploded {
             self.push_event(EV_EXPLOSION, pos, 0.0);
         }
     }
@@ -200,7 +227,7 @@ impl Sim {
                 pos: b.pos,
                 hull_rot: 0.0,
                 turret_rot: 0.0,
-                scale: 1.0,
+                scale: BLOCK_SIZE,
                 flags: FLAG_ALIVE,
             }
             .push(&mut out, &mut n);
@@ -281,6 +308,31 @@ fn collide_blocks(pos: &mut Vec2, radius: f32, blocks: &[Block]) {
     }
 }
 
+fn shell_hit(pos: Vec2, radius: f32, blocks: &[Block]) -> Option<(Vec2, Vec2)> {
+    let h = BLOCK_SIZE * 0.5;
+    for b in blocks {
+        let closest = b.pos + (pos - b.pos).clamp(Vec2::splat(-h), Vec2::splat(h));
+        let d = pos - closest;
+        let dist2 = d.length_squared();
+        if dist2 < radius * radius {
+            let normal = if dist2 > 1e-9 {
+                d / dist2.sqrt()
+            } else {
+                let local = pos - b.pos;
+                let px = h - local.x.abs();
+                let py = h - local.y.abs();
+                if px < py {
+                    Vec2::new(local.x.signum(), 0.0)
+                } else {
+                    Vec2::new(0.0, local.y.signum())
+                }
+            };
+            return Some((closest, normal));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +353,23 @@ mod tests {
         sim.tick(0.1);
         assert_eq!(sim.shells.len(), 1);
         sim.tick(SHELL_TTL);
+        assert_eq!(sim.shells.len(), 0);
+        let events = sim.take_events();
+        assert_eq!(events[0], 2.0);
+        assert_eq!(events[1], EV_SHELL_FIRED);
+        assert_eq!(events[5], EV_EXPLOSION);
+    }
+
+    #[test]
+    fn shell_bounces_once_then_explodes_on_second_hit() {
+        let mut sim = Sim::new();
+        sim.set_input(0.0, 0.0, 0.0, 10.0);
+        sim.request_fire();
+        sim.tick(0.1);
+        assert_eq!(sim.shells.len(), 1);
+        for _ in 0..200 {
+            sim.tick(0.016);
+        }
         assert_eq!(sim.shells.len(), 0);
         let events = sim.take_events();
         assert_eq!(events[0], 2.0);
